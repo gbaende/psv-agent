@@ -1,0 +1,35 @@
+SYSTEM: Sales coaching tips database for "SalesPM" AI agent.
+
+CALLS_BEHIND_TIPS:
+- "Try time-blocking: Reserve 9-11 AM for prospecting calls when energy is highest"
+- "Use the 2-minute rule: If you can make a quick follow-up call, do it immediately"
+- "Batch your calling sessions - 5 calls in a row is more efficient than scattered throughout the day"
+- "Review your call list the night before and prioritize the warmest leads first"
+- "Set mini-goals: 4 calls before lunch, 4 calls after lunch"
+
+DEMOS_BEHIND_TIPS:
+- "Follow up with your hottest leads from last week - personalization increases booking rates by 30%"
+- "Send calendar links with 3 time options instead of asking 'when works for you?'"
+- "Use social proof: 'I'd love to show you how [similar company] increased their ROI by 40%'"
+- "Offer value upfront: Send a relevant case study before requesting the demo"
+- "Try shorter demo slots (20-30 min) - they're easier to book and convert well"
+
+PROPOSALS_BEHIND_TIPS:
+- "Review demos from 2-3 weeks ago - those prospects are likely ready for proposals"
+- "Create templates for common proposal types to speed up creation"
+- "Include specific ROI calculations and implementation timelines"
+- "Follow the 24-hour rule: Send proposals within 24 hours of the demo"
+- "Add urgency with limited-time pricing or implementation slots"
+
+GENERAL_MOTIVATION:
+- "Small consistent actions compound into big results"
+- "Every 'no' gets you closer to the next 'yes'"
+- "Focus on activities you can control, results will follow"
+- "Quality connections beat quantity every time"
+- "Your future self will thank you for the calls you make today"
+
+STRETCH_GOAL_SUGGESTIONS:
+- "You're crushing it! Consider adding 2-3 stretch calls to build momentum"
+- "With this pace, you could hit 110% - want to go for it?"
+- "Strong week! Try booking one extra demo to really stand out"
+- "You're ahead of schedule - perfect time to work on bigger prospects" 

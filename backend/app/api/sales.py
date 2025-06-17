@@ -75,7 +75,7 @@ class MessageRequest(BaseModel):
 # ================== MANUAL TRIGGERS ==================
 
 @router.post("/triggers/monday-prompts", response_model=SalesResponse)
-async def trigger_monday_prompts(db: AsyncSession = Depends(get_db)):
+async def trigger_monday_prompts():
     """Manually trigger Monday goal-setting prompts for all sales reps"""
     try:
         # Run the scheduled job manually
@@ -90,7 +90,7 @@ async def trigger_monday_prompts(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/triggers/wednesday-nudges", response_model=SalesResponse)
-async def trigger_wednesday_nudges(db: AsyncSession = Depends(get_db)):
+async def trigger_wednesday_nudges():
     """Manually trigger Wednesday coaching nudges"""
     try:
         await sales_scheduler.wednesday_nudges()
@@ -104,7 +104,7 @@ async def trigger_wednesday_nudges(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/triggers/friday-summaries", response_model=SalesResponse)
-async def trigger_friday_summaries(db: AsyncSession = Depends(get_db)):
+async def trigger_friday_summaries():
     """Manually trigger Friday weekly summaries and leaderboard generation"""
     try:
         await sales_scheduler.friday_summaries()
@@ -118,7 +118,7 @@ async def trigger_friday_summaries(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/triggers/milestone-check", response_model=SalesResponse)
-async def trigger_milestone_check(db: AsyncSession = Depends(get_db)):
+async def trigger_milestone_check():
     """Manually trigger milestone achievement check"""
     try:
         await sales_scheduler.daily_milestone_check()

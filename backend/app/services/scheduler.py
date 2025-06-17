@@ -1,11 +1,12 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select
 from datetime import datetime, date
 import asyncio
 
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.services.sales_agent import SalesAgentService
 from app.models import User, TeamLeaderboard
 
@@ -70,27 +71,27 @@ class SalesAgentScheduler:
         print(f"🎯 [SALES AGENT] Starting Monday goal prompts at {datetime.now()}")
         
         try:
-            # Get async database session
-            async for db in get_db():
+            # Use sync database session for SalesAgentService compatibility
+            db = SessionLocal()
+            try:
                 sales_agent = SalesAgentService(db)
                 
-                # Get all sales team members
-                result = await db.execute(select(User).where(User.role == "sales"))
-                sales_users = result.scalars().all()
+                # Get all sales team members using sync query
+                sales_users = db.query(User).filter(User.role == "sales").all()
                 
                 success_count = 0
                 for user in sales_users:
                     try:
                         # Check if user already has goals for this week
                         week_start = sales_agent.get_current_week_start()
-                        existing_progress = await sales_agent.get_weekly_progress(user.id, week_start)
+                        existing_progress = sales_agent.get_weekly_progress(user.id, week_start)
                         
                         if existing_progress['calls_target'] > 0:
                             # User already set goals, send confirmation instead
                             await self._send_goal_confirmation(sales_agent, user, existing_progress)
                         else:
                             # Send goal-setting prompt
-                            success = await sales_agent.send_monday_goal_prompt(user.id)
+                            success = sales_agent.send_monday_goal_prompt(user.id)
                             if success:
                                 success_count += 1
                                 print(f"✅ Sent Monday prompt to {user.name}")
@@ -101,7 +102,8 @@ class SalesAgentScheduler:
                         print(f"❌ Error sending prompt to {user.name}: {e}")
                 
                 print(f"🎯 [SALES AGENT] Monday prompts completed: {success_count}/{len(sales_users)} sent")
-                break  # Exit the async generator loop
+            finally:
+                db.close()
             
         except Exception as e:
             print(f"❌ [SALES AGENT] Error in Monday goal prompts: {e}")
@@ -111,21 +113,23 @@ class SalesAgentScheduler:
         print(f"📊 [SALES AGENT] Starting Wednesday nudges at {datetime.now()}")
         
         try:
-            async for db in get_db():
+            # Use sync database session for SalesAgentService compatibility
+            db = SessionLocal()
+            try:
                 sales_agent = SalesAgentService(db)
                 
-                result = await db.execute(select(User).where(User.role == "sales"))
-                sales_users = result.scalars().all()
+                # Get all sales team members using sync query
+                sales_users = db.query(User).filter(User.role == "sales").all()
                 
                 success_count = 0
                 for user in sales_users:
                     try:
                         # Only send nudge if user has goals for this week
                         week_start = sales_agent.get_current_week_start()
-                        progress = await sales_agent.get_weekly_progress(user.id, week_start)
+                        progress = sales_agent.get_weekly_progress(user.id, week_start)
                         
                         if progress['calls_target'] > 0 or progress['demos_target'] > 0 or progress['proposals_target'] > 0:
-                            success = await sales_agent.send_midweek_nudge(user.id)
+                            success = sales_agent.send_midweek_nudge(user.id)
                             if success:
                                 success_count += 1
                                 print(f"✅ Sent Wednesday nudge to {user.name}")
@@ -138,7 +142,8 @@ class SalesAgentScheduler:
                         print(f"❌ Error sending nudge to {user.name}: {e}")
                 
                 print(f"📊 [SALES AGENT] Wednesday nudges completed: {success_count}/{len(sales_users)} sent")
-                break
+            finally:
+                db.close()
                 
         except Exception as e:
             print(f"❌ [SALES AGENT] Error in Wednesday nudges: {e}")

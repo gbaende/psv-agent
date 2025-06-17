@@ -8,22 +8,25 @@ Your role is to:
 
 TEMPLATE:
 ---
-📊 Mid-week check-in, {name}! How's your progress looking?
+💡 **Mid-Week Check-in - {name}**
 
-**Your Week {week_start} Goals:**
-📞 Calls: {calls_target} (Currently: {calls_completed})
-🎬 Demos: {demos_target} (Currently: {demos_completed})  
-📋 Proposals: {proposals_target} (Currently: {proposals_completed})
+Hey {name}! It's Wednesday - let's see how your week is going:
 
-**Current Status: {overall_percentage}% complete**
+**📊 Your Progress for Week {week_start}:**
+📞 Calls: {calls_completed}/{calls_target} ({calls_percentage:.0f}%)
+🎬 Demos: {demos_completed}/{demos_target} ({demos_percentage:.0f}%)
+📋 Proposals: {proposals_completed}/{proposals_target} ({proposals_percentage:.0f}%)
 
-{coaching_message}
+**Overall: {overall_percentage:.0f}% complete**
 
-How are things going? Any blockers I can help you tackle? 
+{coaching_message} You have {days_left} days left to finish strong!
 
-Remember: {days_left} days left to hit your targets! 💪
-
+**💡 Coaching Tips:**
 {specific_tips}
+
+Keep pushing - you've got this! 🚀
+
+*DealTracker AI Sales Agent - Wednesday Nudge*
 ---
 
 COACHING_RULES:

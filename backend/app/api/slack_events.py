@@ -3,12 +3,16 @@ from sqlalchemy.orm import Session
 import json
 from datetime import datetime, date
 from typing import Dict, Any
+import logging
 
 from app.database import get_db
 from app.services.sales_agent import SalesAgentService
 from app.services.slack_service import SlackService
+from app.services.ai_service import ai_service
 from app.models import User, SalesConversation
+from app.services.auto_sync_users import auto_sync_service
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/slack", tags=["slack"])
 
@@ -23,15 +27,19 @@ class SlackEventRouter:
     
     def is_reply_to_weekly_prompt(self, user_id: str, text: str, thread_ts: str = None) -> bool:
         """Check if this is a reply to Monday's goal-setting prompt"""
-        # Look for an active conversation for this week
-        week_start = self.sales_agent.get_current_week_start()
-        conversation = self.db.query(SalesConversation).filter(
-            SalesConversation.user_slack_id == user_id,
-            SalesConversation.week_start == week_start,
-            SalesConversation.conversation_type == "weekly_goals"
-        ).first()
-        
-        return conversation is not None
+        try:
+            # Look for an active conversation for this week
+            week_start = self.sales_agent.get_current_week_start()
+            conversation = self.db.query(SalesConversation).filter(
+                SalesConversation.user_slack_id == user_id,
+                SalesConversation.week_start == week_start,
+                SalesConversation.conversation_type == "weekly_goals"
+            ).first()
+            
+            return conversation is not None
+        except Exception as e:
+            logger.error(f"Error checking weekly prompt reply: {e}")
+            return False
     
     def is_midweek_update(self, user_id: str, text: str) -> bool:
         """Check if this is a mid-week progress update"""
@@ -74,15 +82,16 @@ class SlackEventRouter:
     
     def generate_individual_summary(self, user_id: str, week_start: date) -> str:
         """Generate individual progress summary"""
-        # Get user from Slack ID
-        user = self.db.query(User).filter(User.slack_user_id == user_id).first()
-        if not user:
-            return "Sorry, I couldn't find your user profile."
-        
-        progress = self.sales_agent.get_weekly_progress(user.id, week_start)
-        
-        summary = f"""📊 **Your Week Progress Summary**
-        
+        try:
+            # Get user from Slack ID
+            user = self.db.query(User).filter(User.slack_user_id == user_id).first()
+            if not user:
+                return "Sorry, I couldn't find your user profile."
+            
+            progress = self.sales_agent.get_weekly_progress(user.id, week_start)
+            
+            summary = f"""📊 **Your Week Progress Summary**
+            
 **Current Status:**
 📞 Calls: {progress['calls_completed']}/{progress['calls_target']} ({progress['calls_percentage']}%)
 🎬 Demos: {progress['demos_completed']}/{progress['demos_target']} ({progress['demos_percentage']}%)
@@ -93,13 +102,48 @@ class SlackEventRouter:
 {self.sales_agent.generate_coaching_tips(user.id, progress)}
 
 Keep pushing! 💪"""
-        
-        return summary
+            
+            return summary
+        except Exception as e:
+            logger.error(f"Error generating individual summary: {e}")
+            return "I'm having trouble generating your summary right now. Please try again later."
     
     def project_manager_llm(self, text: str, user_id: str) -> str:
-        """Fallback to general project management AI"""
-        # This would use the general AI service for non-sales queries
-        return f"I understand you're asking: '{text}'. As your SalesPM, I'm focused on sales goals and tasks. For general project questions, please use the main dashboard or contact your manager."
+        """Use AI service for general sales-related conversations"""
+        try:
+            # Get user context
+            user = self.db.query(User).filter(User.slack_user_id == user_id).first()
+            user_name = user.name if user else "there"
+            
+            # Create a context-aware system message
+            system_message = f"""You are SalesPM, an AI sales project manager for Pacific Software Ventures. 
+            You're chatting with {user_name}, a sales representative. 
+            
+            Your role is to:
+            - Help with sales strategy and tactics
+            - Provide motivation and coaching
+            - Answer questions about sales processes
+            - Track and discuss progress toward goals
+            - Offer practical sales advice
+            
+            Keep responses friendly, professional, and focused on helping them succeed in sales.
+            Use emojis appropriately and keep responses concise but helpful."""
+            
+            try:
+                # Use the AI service for a more intelligent response
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                response = loop.run_until_complete(ai_service.generate_response(text, system_message))
+                loop.close()
+                return response
+            except Exception as e:
+                logger.error(f"Error generating AI response: {e}")
+                # Fallback response
+                return f"Hi {user_name}! I'm your SalesPM assistant. I can help you with sales goals, progress tracking, and general sales questions. What would you like to know about?"
+        except Exception as e:
+            logger.error(f"Error in project_manager_llm: {e}")
+            return "Hi there! I'm your SalesPM assistant. I can help you with sales goals, progress tracking, and general sales questions. What would you like to know about?"
 
     async def auto_onboard_new_user(self, user_id: str) -> bool:
         """Automatically onboard a new user when they join the channel"""
@@ -167,7 +211,7 @@ When I send you the Monday prompt, just reply with your weekly targets:
 *"I'll do 20 calls, 5 demos, and 2 proposals this week"*
 
 **📊 Dashboard Access:**
-You now have access to the sales dashboard at: http://localhost:3000
+You now have access to the sales dashboard at: http://35.175.231.57
 
 Ready to crush some sales goals? Let's do this! 💪
 
@@ -191,27 +235,40 @@ async def handle_slack_events(request: Request, db: Session = Depends(get_db)):
             event = payload["event"]
             event_type = event.get("type")
             
-            # Handle member joining channel
+            # Handle member joining channel - AUTO-SYNC NEW USERS
             if event_type == "member_joined_channel":
                 user_id = event["user"]
                 channel_id = event["channel"]
                 
-                # Only auto-onboard for our sales channel
+                # Only auto-sync for our sales channel
                 if channel_id == "C08UNPU9AGN":  # #psv-sales-agent channel
-                    event_router = SlackEventRouter(db)
-                    success = await event_router.auto_onboard_new_user(user_id)
+                    logger.info(f"🆕 New member joined #psv-sales-agent: {user_id}")
                     
-                    if success:
-                        # Also send announcement to team channel
-                        user_response = await event_router.slack_service.client.users_info(user=user_id)
-                        if user_response["ok"]:
-                            user_name = user_response["user"].get("real_name", "New Team Member")
-                            team_message = f"🎉 Welcome <@{user_id}> to the sales team! They've been automatically onboarded to DealTracker. 🚀"
-                            await event_router.slack_service.send_message(channel_id, team_message)
+                    # Auto-sync the new user
+                    sync_result = await auto_sync_service.sync_single_user(user_id)
                     
-                    return {"status": "user_onboarded" if success else "onboarding_failed"}
+                    if sync_result["success"]:
+                        user_info = sync_result["user"]
+                        action = sync_result["action"]
+                        
+                        if action == "created":
+                            # Send team announcement for new users
+                            slack_service = SlackService()
+                            team_message = f"🎉 Welcome <@{user_id}> to the PSV Sales Team! They've been automatically added to DealTracker. 🚀\n\n📊 View the team dashboard: http://35.175.231.57"
+                            await slack_service.send_message(channel_id, team_message)
+                            
+                            logger.info(f"✅ Auto-onboarded new user: {user_info['name']}")
+                            return {"status": "user_auto_onboarded", "user": user_info}
+                        else:
+                            logger.info(f"✅ Updated existing user: {user_info['name']}")
+                            return {"status": "user_updated", "user": user_info}
+                    else:
+                        logger.error(f"❌ Failed to auto-sync user {user_id}: {sync_result.get('error')}")
+                        return {"status": "sync_failed", "error": sync_result.get("error")}
+                    
+                return {"status": "member_joined_other_channel"}
             
-            # Only handle direct messages
+            # Handle direct messages
             elif event_type == "message" and event.get("channel_type") == "im":
                 user_id = event["user"]
                 text = event.get("text", "")
@@ -250,9 +307,11 @@ async def handle_slack_events(request: Request, db: Session = Depends(get_db)):
         
         return {"status": "ok"}
         
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
     except Exception as e:
-        print(f"Error handling Slack event: {e}")
-        return {"status": "error", "message": str(e)}
+        logger.error(f"Error handling Slack event: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 async def handle_weekly_goal_response(event_router: SlackEventRouter, 
@@ -376,15 +435,43 @@ async def handle_progress_query(event_router: SlackEventRouter,
 
 async def handle_general_query(event_router: SlackEventRouter,
                              user_id: str, text: str, channel_id: str):
-    """Handle general/fallback queries"""
+    """Handle general/fallback queries using AI"""
     try:
-        response = event_router.project_manager_llm(text, user_id)
+        # Get user context
+        user = event_router.db.query(User).filter(User.slack_user_id == user_id).first()
+        user_name = user.name if user else "there"
+        
+        # Enhanced system message for better conversation
+        system_message = f"""You are SalesPM, an AI sales project manager for Pacific Software Ventures. 
+        You're chatting with {user_name}, a sales representative.
+        
+        Your role is to:
+        - Help with sales strategy, tactics, and best practices
+        - Provide motivation, coaching, and encouragement
+        - Answer questions about sales processes and techniques
+        - Discuss progress, goals, and performance
+        - Offer practical, actionable sales advice
+        - Help with objection handling, prospecting, and closing techniques
+        
+        Keep responses:
+        - Friendly and professional
+        - Focused on sales success
+        - Concise but comprehensive (2-3 sentences typically)
+        - Include relevant emojis
+        - Actionable and practical
+        
+        If they ask about technical features or non-sales topics, gently redirect to sales-related aspects."""
+        
+        # Use AI service for intelligent response
+        response = await ai_service.generate_response(text, system_message)
+        
         await event_router.slack_service.send_message(channel_id, response)
         return {"status": "general_handled"}
         
     except Exception as e:
-        await event_router.slack_service.send_message(channel_id,
-            "Sorry, I'm having trouble right now. Please try again later or contact your manager.")
+        logger.error(f"Error in general query handler: {e}")
+        fallback_response = f"Hi there! 👋 I'm your SalesPM assistant. I can help you with sales goals, progress tracking, coaching tips, and general sales questions. What would you like to know about?"
+        await event_router.slack_service.send_message(channel_id, fallback_response)
         return {"status": "error"}
 
 

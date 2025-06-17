@@ -31,6 +31,11 @@ class SlackService:
             logger.warning("Slack client not initialized. Message not sent.")
             return {"ok": False, "error": "slack_not_configured"}
         
+        # Ensure text is not empty or None
+        if not text or not text.strip():
+            text = "🤖 DealTracker message (content unavailable)"
+            logger.warning("Empty text provided to send_message, using fallback")
+        
         try:
             response = await self.client.chat_postMessage(
                 channel=channel,
@@ -50,6 +55,11 @@ class SlackService:
         if not self.client:
             logger.warning("Slack client not initialized. DM not sent.")
             return {"ok": False, "error": "slack_not_configured"}
+        
+        # Ensure text is not empty or None
+        if not text or not text.strip():
+            text = "🤖 DealTracker message (content unavailable)"
+            logger.warning("Empty text provided to send_direct_message, using fallback")
         
         try:
             # Open a DM channel with the user

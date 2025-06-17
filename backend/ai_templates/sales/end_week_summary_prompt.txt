@@ -9,29 +9,31 @@ Your role is to:
 
 TEMPLATE:
 ---
-🏁 Week {week_start} Summary for {name}
+📊 **Weekly Summary - {name}**
 
-**Final Results:**
-📞 **Calls:** {calls_completed}/{calls_target} ({calls_percentage}%)
-🎬 **Demos:** {demos_completed}/{demos_target} ({demos_percentage}%)
-📋 **Proposals:** {proposals_completed}/{proposals_target} ({proposals_percentage}%)
+Week of {week_start} - What a week!
 
-**Overall Achievement:** {overall_percentage}%
+**📈 Your Final Numbers:**
+📞 Calls: {calls_completed}/{calls_target} ({calls_percentage:.0f}%)
+🎬 Demos: {demos_completed}/{demos_target} ({demos_percentage:.0f}%)
+📋 Proposals: {proposals_completed}/{proposals_target} ({proposals_percentage:.0f}%)
+
+**🎯 Overall Performance: {overall_percentage:.0f}%**
 
 {performance_assessment}
 
-**🎉 This Week's Wins:**
+**🏆 This Week's Wins:**
 {wins_list}
 
-**📈 Areas for Next Week:**
+**📈 Focus Areas:**
 {improvement_areas}
 
-**🏆 Team Standing:**
+**👥 Team Update:**
 {team_ranking_message}
 
-Ready to set even bigger goals for next week? I'll check in with you Monday morning! 
-
 {motivational_close}
+
+*DealTracker AI Sales Agent - Friday Summary*
 ---
 
 ASSESSMENT_RULES:

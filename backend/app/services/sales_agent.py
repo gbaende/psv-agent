@@ -1,11 +1,12 @@
 import json
 import math
 import random
+import asyncio
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import select, delete
 from app.models import User, Project, Task, Goal, WeeklyGoal
 from app.database import get_db
@@ -16,28 +17,42 @@ from app.services.ai_service import AIService
 class SalesAgentService:
     """Autonomous Sales Project Manager Agent"""
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: Session):
         self.db = db
         self.slack_service = SlackService()
         self.ai_service = AIService()
         self.templates_path = Path("ai_templates/sales/")
+    
+    def _send_slack_message_sync(self, user_slack_id: str, message: str) -> bool:
+        """Helper to send Slack message synchronously"""
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                self.slack_service.send_direct_message(user_slack_id, message)
+            )
+            loop.close()
+            return result.get("ok", False)
+        except Exception as e:
+            print(f"Error sending Slack message: {e}")
+            return False
     
     def load_template(self, template_name: str) -> str:
         """Load a sales prompt template"""
         template_path = self.templates_path / template_name
         if template_path.exists():
             return template_path.read_text()
-        return ""
+        # Return fallback template if file doesn't exist
+        return f"Hi {{name}}! This is a {template_name.replace('_', ' ').replace('.txt', '')} message from DealTracker. Please check back later for more details."
     
     def get_current_week_start(self) -> date:
         """Get the Monday of the current week"""
         today = date.today()
         return today - timedelta(days=today.weekday())
     
-    async def get_or_create_sales_project(self) -> Project:
+    def get_or_create_sales_project(self) -> Project:
         """Get or create the persistent Sales Sprint project"""
-        result = await self.db.execute(select(Project).where(Project.name == "PSV Sales Agent Team"))
-        project = result.scalar_one_or_none()
+        project = self.db.query(Project).filter(Project.name == "PSV Sales Agent Team").first()
         if not project:
             project = Project(
                 name="PSV Sales Agent Team",
@@ -47,10 +62,10 @@ class SalesAgentService:
                 owner_id=1  # System project
             )
             self.db.add(project)
-            await self.db.commit()
+            self.db.commit()
         return project
     
-    async def parse_sales_response(self, text: str) -> Dict[str, int]:
+    def parse_sales_response(self, text: str) -> Dict[str, int]:
         """Parse sales rep's goal response using AI"""
         prompt = f"""
         You are SalesPM. Extract numbers for calls, demos, and proposals from the rep's response. 
@@ -63,13 +78,15 @@ class SalesAgentService:
         """
         
         try:
-            response = await self.ai_service.generate_response(prompt)
+            # For now, use simple parsing since AI service might not be available
+            # response = self.ai_service.generate_response(prompt)
             # Extract JSON from response
-            start_idx = response.find('{')
-            end_idx = response.rfind('}') + 1
-            if start_idx != -1 and end_idx != -1:
-                json_str = response[start_idx:end_idx]
-                return json.loads(json_str)
+            # start_idx = response.find('{')
+            # end_idx = response.rfind('}') + 1
+            # if start_idx != -1 and end_idx != -1:
+            #     json_str = response[start_idx:end_idx]
+            #     return json.loads(json_str)
+            pass
         except Exception as e:
             print(f"Error parsing sales response: {e}")
         
@@ -90,20 +107,21 @@ class SalesAgentService:
         
         return goals
     
-    async def create_weekly_sales_tasks(self, user_id: int, goals: Dict[str, int]):
+    def create_weekly_sales_tasks(self, user_id: int, week_start: date, goals: Dict[str, int]) -> int:
         """Create micro-tasks from parsed goals"""
-        project = await self.get_or_create_sales_project()
-        week_start = self.get_current_week_start()
+        project = self.get_or_create_sales_project()
         
         # Clear existing tasks for this week
-        await self.db.execute(
-            delete(Task).where(
-                Task.owner_id == user_id,
-                Task.project_id == project.id,
-                Task.created_at >= week_start,
-                Task.created_at < week_start + timedelta(days=7)
-            )
-        )
+        week_end = week_start + timedelta(days=7)
+        existing_tasks = self.db.query(Task).filter(
+            Task.owner_id == user_id,
+            Task.project_id == project.id,
+            Task.created_at >= week_start,
+            Task.created_at < week_end
+        ).all()
+        
+        for task in existing_tasks:
+            self.db.delete(task)
         
         tasks = []
         
@@ -127,9 +145,9 @@ class SalesAgentService:
         
         for task in tasks:
             self.db.add(task)
-        await self.db.commit()
+        self.db.commit()
         
-        return tasks
+        return len(tasks)
     
     def _generate_call_subtasks(self, user_id: int, project_id: int, 
                                week_start: date, total_calls: int) -> List[Task]:
@@ -191,20 +209,17 @@ class SalesAgentService:
         
         return tasks
     
-    async def get_weekly_progress(self, user_id: int, week_start: date) -> Dict:
+    def get_weekly_progress(self, user_id: int, week_start: date) -> Dict:
         """Get current week's progress for a user"""
-        project = await self.get_or_create_sales_project()
+        project = self.get_or_create_sales_project()
         
         # Get tasks for this week
-        result = await self.db.execute(
-            select(Task).where(
-                Task.owner_id == user_id,
-                Task.project_id == project.id,
-                Task.created_at >= week_start,
-                Task.created_at < week_start + timedelta(days=7)
-            )
-        )
-        tasks = result.scalars().all()
+        tasks = self.db.query(Task).filter(
+            Task.owner_id == user_id,
+            Task.project_id == project.id,
+            Task.created_at >= week_start,
+            Task.created_at < week_start + timedelta(days=7)
+        ).all()
         
         progress = {
             "calls_target": 0,
@@ -259,7 +274,7 @@ class SalesAgentService:
         
         return progress
     
-    async def generate_coaching_tips(self, progress: Dict) -> List[str]:
+    def generate_coaching_tips(self, progress: Dict) -> List[str]:
         """Generate personalized coaching tips based on progress"""
         try:
             # For now, generate tips based on progress data
@@ -305,10 +320,9 @@ class SalesAgentService:
             print(f"Error generating coaching tips: {e}")
             return ["Keep pushing! Focus on your daily activities and the results will follow."]
     
-    async def send_monday_goal_prompt(self, user_id: int) -> bool:
+    def send_monday_goal_prompt(self, user_id: int) -> bool:
         """Send Monday morning goal-setting prompt"""
-        user = await self.db.execute(select(User).where(User.id == user_id))
-        user = user.scalar_one_or_none()
+        user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             return False
         
@@ -317,7 +331,7 @@ class SalesAgentService:
         
         # Get previous week's performance
         prev_week = week_start - timedelta(days=7)
-        prev_progress = await self.get_weekly_progress(user_id, prev_week)
+        prev_progress = self.get_weekly_progress(user_id, prev_week)
         
         previous_performance = f"Calls: {prev_progress['calls_completed']}/{prev_progress['calls_target']}, Demos: {prev_progress['demos_completed']}/{prev_progress['demos_target']}, Proposals: {prev_progress['proposals_completed']}/{prev_progress['proposals_target']}"
         
@@ -331,17 +345,16 @@ class SalesAgentService:
         )
         
         # Send Slack DM
-        return await self.slack_service.send_direct_message(user.slack_user_id, message)
+        return self._send_slack_message_sync(user.slack_user_id, message)
     
-    async def send_midweek_nudge(self, user_id: int) -> bool:
+    def send_midweek_nudge(self, user_id: int) -> bool:
         """Send Wednesday mid-week coaching nudge"""
-        user = await self.db.execute(select(User).where(User.id == user_id))
-        user = user.scalar_one_or_none()
+        user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             return False
         
         week_start = self.get_current_week_start()
-        progress = await self.get_weekly_progress(user_id, week_start)
+        progress = self.get_weekly_progress(user_id, week_start)
         
         # Calculate days left
         today = date.today()
@@ -349,7 +362,7 @@ class SalesAgentService:
         days_left = (week_end - today).days
         
         # Generate coaching message
-        coaching_tips = await self.generate_coaching_tips(progress)
+        coaching_tips = self.generate_coaching_tips(progress)
         
         # Load and format template
         template = self.load_template("mid_week_nudge_prompt.txt")
@@ -368,17 +381,16 @@ class SalesAgentService:
             specific_tips=coaching_tips
         )
         
-        return await self.slack_service.send_direct_message(user.slack_user_id, message)
+        return self._send_slack_message_sync(user.slack_user_id, message)
     
-    async def send_weekly_summary(self, user_id: int) -> bool:
+    def send_weekly_summary(self, user_id: int) -> bool:
         """Send Friday end-of-week summary"""
-        user = await self.db.execute(select(User).where(User.id == user_id))
-        user = user.scalar_one_or_none()
+        user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             return False
         
         week_start = self.get_current_week_start()
-        progress = await self.get_weekly_progress(user_id, week_start)
+        progress = self.get_weekly_progress(user_id, week_start)
         
         # Performance assessment
         if progress["overall_percentage"] >= 100:
@@ -426,36 +438,34 @@ class SalesAgentService:
             motivational_close="Every week is a chance to level up! 🚀"
         )
         
-        return await self.slack_service.send_direct_message(user.slack_user_id, message)
+        return self._send_slack_message_sync(user.slack_user_id, message)
     
-    async def mark_task_complete(self, task_id: int) -> bool:
+    def mark_task_complete(self, task_id: int) -> bool:
         """Mark a specific task as complete"""
         try:
-            result = await self.db.execute(select(Task).where(Task.id == task_id))
-            task = result.scalar_one_or_none()
+            task = self.db.query(Task).filter(Task.id == task_id).first()
             
             if task:
                 task.status = "Completed"
-                await self.db.commit()
+                self.db.commit()
                 return True
             return False
         except Exception as e:
             print(f"Error marking task complete: {e}")
             return False
     
-    async def get_team_leaderboard(self, week_start: date = None) -> List[Dict]:
+    def get_team_leaderboard(self, week_start: date = None) -> List[Dict]:
         """Generate team leaderboard for the week"""
         if not week_start:
             week_start = self.get_current_week_start()
         
         try:
             # Get all sales users
-            result = await self.db.execute(select(User).where(User.role == "sales"))
-            sales_users = result.scalars().all()
+            sales_users = self.db.query(User).filter(User.role == "sales").all()
             
             leaderboard = []
             for user in sales_users:
-                progress = await self.get_weekly_progress(user.id, week_start)
+                progress = self.get_weekly_progress(user.id, week_start)
                 
                 # Calculate total score (weighted)
                 total_score = (

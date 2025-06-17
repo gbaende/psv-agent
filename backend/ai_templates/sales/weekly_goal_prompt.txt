@@ -10,19 +10,26 @@ When asking sales reps for weekly goals, you should:
 
 TEMPLATE:
 ---
-🎯 Good morning {name}! Hope you're ready to crush this week ({week_start} - {week_end}).
+🎯 **Monday Goal Setting - {name}!**
 
-Last week you achieved: {previous_performance}
+Ready to start the week strong at Pacific Software Ventures?
 
-For this week, I need your commitments on these key metrics:
-📞 **Discovery Calls**: How many new prospects will you reach out to?
-🎬 **Demos/Presentations**: How many product demos will you deliver?
-📋 **Proposals**: How many proposals will you submit?
+**Week of {week_start} - {week_end}**
 
-Please reply with specific numbers for each category. For example:
-"I'll do 20 calls, 5 demos, and 3 proposals this week"
+**Last Week:** {previous_performance}
 
-Remember, these become your tracked goals - aim high but stay realistic! 🚀
+Let's set your sales targets for this week:
 
-What are your numbers for this week?
+📞 **Discovery Calls** - How many prospects will you contact?
+🎬 **Product Demos** - How many demos will you deliver?  
+📋 **Proposals** - How many proposals will you submit?
+
+**Example responses:**
+• "20 calls, 5 demos, 2 proposals"
+• "I'll do 15 calls and 3 demos this week"
+• "Target: 25 calls, 4 demos, 1 proposal"
+
+Just reply with your numbers and I'll create tasks to track your progress! 💪
+
+*DealTracker AI Sales Agent - Monday Check-in*
 --- 

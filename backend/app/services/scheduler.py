@@ -91,7 +91,7 @@ class SalesAgentScheduler:
                             await self._send_goal_confirmation(sales_agent, user, existing_progress)
                         else:
                             # Send goal-setting prompt
-                            success = sales_agent.send_monday_goal_prompt(user.id)
+                            success = await sales_agent.send_monday_goal_prompt_async(user.id)
                             if success:
                                 success_count += 1
                                 print(f"✅ Sent Monday prompt to {user.name}")
@@ -129,7 +129,7 @@ class SalesAgentScheduler:
                         progress = sales_agent.get_weekly_progress(user.id, week_start)
                         
                         if progress['calls_target'] > 0 or progress['demos_target'] > 0 or progress['proposals_target'] > 0:
-                            success = sales_agent.send_midweek_nudge(user.id)
+                            success = await sales_agent.send_midweek_nudge_async(user.id)
                             if success:
                                 success_count += 1
                                 print(f"✅ Sent Wednesday nudge to {user.name}")

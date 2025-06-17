@@ -37,6 +37,15 @@ class SalesAgentService:
             print(f"Error sending Slack message: {e}")
             return False
     
+    async def _send_slack_message_async(self, user_slack_id: str, message: str) -> bool:
+        """Helper to send Slack message asynchronously"""
+        try:
+            result = await self.slack_service.send_direct_message(user_slack_id, message)
+            return result.get("ok", False)
+        except Exception as e:
+            print(f"Error sending Slack message: {e}")
+            return False
+    
     def load_template(self, template_name: str) -> str:
         """Load a sales prompt template"""
         template_path = self.templates_path / template_name
@@ -491,4 +500,124 @@ class SalesAgentService:
             
         except Exception as e:
             print(f"Error generating leaderboard: {e}")
-            return [] 
+            return []
+    
+    async def send_monday_goal_prompt_async(self, user_id: int) -> bool:
+        """Send Monday morning goal-setting prompt (async version)"""
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        week_start = self.get_current_week_start()
+        week_end = week_start + timedelta(days=6)
+        
+        # Get previous week's performance
+        prev_week = week_start - timedelta(days=7)
+        prev_progress = self.get_weekly_progress(user_id, prev_week)
+        
+        previous_performance = f"Calls: {prev_progress['calls_completed']}/{prev_progress['calls_target']}, Demos: {prev_progress['demos_completed']}/{prev_progress['demos_target']}, Proposals: {prev_progress['proposals_completed']}/{prev_progress['proposals_target']}"
+        
+        # Load and format template
+        template = self.load_template("weekly_goal_prompt.txt")
+        message = template.format(
+            name=user.name or "there",
+            week_start=week_start.strftime("%b %d"),
+            week_end=week_end.strftime("%b %d"),
+            previous_performance=previous_performance if prev_progress['calls_target'] > 0 else "Starting fresh!"
+        )
+        
+        # Send Slack DM (async)
+        return await self._send_slack_message_async(user.slack_user_id, message)
+
+    async def send_midweek_nudge_async(self, user_id: int) -> bool:
+        """Send Wednesday mid-week coaching nudge (async version)"""
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        week_start = self.get_current_week_start()
+        progress = self.get_weekly_progress(user_id, week_start)
+        
+        # Calculate days left
+        today = date.today()
+        week_end = week_start + timedelta(days=6)
+        days_left = (week_end - today).days
+        
+        # Generate coaching message
+        coaching_tips = self.generate_coaching_tips(progress)
+        
+        # Load and format template
+        template = self.load_template("mid_week_nudge_prompt.txt")
+        message = template.format(
+            name=user.name or "there",
+            week_start=week_start.strftime("%b %d"),
+            calls_target=progress["calls_target"],
+            calls_completed=progress["calls_completed"],
+            demos_target=progress["demos_target"], 
+            demos_completed=progress["demos_completed"],
+            proposals_target=progress["proposals_target"],
+            proposals_completed=progress["proposals_completed"],
+            overall_percentage=progress["overall_percentage"],
+            days_left=days_left,
+            coaching_message="Looking good!" if progress["overall_percentage"] >= 60 else "Let's pick up the pace!",
+            specific_tips=coaching_tips
+        )
+        
+        return await self._send_slack_message_async(user.slack_user_id, message)
+
+    async def send_weekly_summary_async(self, user_id: int) -> bool:
+        """Send Friday end-of-week summary (async version)"""
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        week_start = self.get_current_week_start()
+        progress = self.get_weekly_progress(user_id, week_start)
+        
+        # Performance assessment
+        if progress["overall_percentage"] >= 100:
+            assessment = "🎉 Outstanding week! You exceeded expectations"
+        elif progress["overall_percentage"] >= 80:
+            assessment = "💪 Solid performance! You hit most of your targets"
+        elif progress["overall_percentage"] >= 60:
+            assessment = "👍 Good effort! A few targets missed but progress made"
+        else:
+            assessment = "📈 Challenging week, but that's part of the process"
+        
+        # Generate wins list
+        wins = []
+        if progress["calls_percentage"] >= 100:
+            wins.append(f"✅ Exceeded call target ({progress['calls_completed']}/{progress['calls_target']})")
+        if progress["demos_percentage"] >= 100:
+            wins.append(f"✅ Hit demo target ({progress['demos_completed']}/{progress['demos_target']})")
+        if progress["proposals_percentage"] >= 100:
+            wins.append(f"✅ Crushed proposal target ({progress['proposals_completed']}/{progress['proposals_target']})")
+        
+        if not wins:
+            wins.append("✅ Stayed active and engaged throughout the week")
+        
+        wins_list = "\n".join(wins)
+        
+        # Load and format template
+        template = self.load_template("end_week_summary_prompt.txt")
+        message = template.format(
+            name=user.name or "there",
+            week_start=week_start.strftime("%b %d"),
+            calls_completed=progress["calls_completed"],
+            calls_target=progress["calls_target"],
+            calls_percentage=progress["calls_percentage"],
+            demos_completed=progress["demos_completed"],
+            demos_target=progress["demos_target"],
+            demos_percentage=progress["demos_percentage"],
+            proposals_completed=progress["proposals_completed"],
+            proposals_target=progress["proposals_target"],
+            proposals_percentage=progress["proposals_percentage"],
+            overall_percentage=progress["overall_percentage"],
+            performance_assessment=assessment,
+            wins_list=wins_list,
+            improvement_areas="Focus on consistency and follow-up timing",
+            team_ranking_message="Keep pushing - you're making great progress!",
+            motivational_close="Every week is a chance to level up! 🚀"
+        )
+        
+        return await self._send_slack_message_async(user.slack_user_id, message) 

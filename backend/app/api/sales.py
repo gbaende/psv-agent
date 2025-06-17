@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
 from pydantic import BaseModel
@@ -8,8 +9,15 @@ from app.database import get_db
 from app.services.sales_agent import SalesAgentService
 from app.services.scheduler import sales_scheduler
 from app.models import User, WeeklyGoal, SalesConversation, TeamLeaderboard
+from app.services.auto_sync_users import auto_sync_service
 
 router = APIRouter(tags=["Sales Agent"])
+
+
+def get_sync_session() -> Session:
+    """Get a synchronous database session for SalesAgentService compatibility"""
+    from app.database import SessionLocal
+    return SessionLocal()
 
 
 # Pydantic models for request/response
@@ -234,55 +242,85 @@ async def update_progress(
 
 @router.get("/progress/team", response_model=List[WeeklyProgressResponse])
 async def get_team_progress(
-    week_start: Optional[date] = Query(None, description="Week start date (defaults to current week)"),
-    db: AsyncSession = Depends(get_db)
+    week_start: Optional[date] = Query(None, description="Week start date (defaults to current week)")
 ):
     """Get progress for entire sales team"""
     try:
-        sales_agent = SalesAgentService(db)
-        
-        if not week_start:
-            week_start = sales_agent.get_current_week_start()
-        
-        # Get all sales users
-        from sqlalchemy import select
-        result = await db.execute(select(User).where(User.role == "sales"))
-        sales_users = result.scalars().all()
-        
-        team_progress = []
-        for user in sales_users:
-            progress = await sales_agent.get_weekly_progress(user.id, week_start)
-            team_progress.append(WeeklyProgressResponse(
-                user_id=user.id,
-                user_name=user.name,
-                week_start=week_start,
-                **progress
-            ))
-        
-        # Sort by overall percentage descending
-        team_progress.sort(key=lambda x: x.overall_percentage, reverse=True)
-        
-        # Add ranks
-        for rank, progress in enumerate(team_progress, 1):
-            progress.rank = rank
-        
-        return team_progress
+        # Use sync session for SalesAgentService compatibility
+        sync_db = get_sync_session()
+        try:
+            sales_agent = SalesAgentService(sync_db)
+            
+            if not week_start:
+                week_start = sales_agent.get_current_week_start()
+            
+            # Get all sales users using sync session
+            sales_users = sync_db.query(User).filter(User.role == "sales").all()
+            
+            team_progress = []
+            for user in sales_users:
+                try:
+                    progress = sales_agent.get_weekly_progress(user.id, week_start)
+                    team_progress.append(WeeklyProgressResponse(
+                        user_id=user.id,
+                        user_name=user.name,
+                        week_start=week_start,
+                        **progress
+                    ))
+                except Exception as user_error:
+                    # Handle individual user progress errors gracefully
+                    print(f"Error getting progress for user {user.name}: {user_error}")
+                    # Add empty progress for user
+                    team_progress.append(WeeklyProgressResponse(
+                        user_id=user.id,
+                        user_name=user.name,
+                        week_start=week_start,
+                        calls_target=0,
+                        calls_completed=0,
+                        calls_percentage=0.0,
+                        demos_target=0,
+                        demos_completed=0,
+                        demos_percentage=0.0,
+                        proposals_target=0,
+                        proposals_completed=0,
+                        proposals_percentage=0.0,
+                        overall_percentage=0.0
+                    ))
+            
+            # Sort by overall percentage descending
+            team_progress.sort(key=lambda x: x.overall_percentage, reverse=True)
+            
+            # Add ranks
+            for rank, progress in enumerate(team_progress, 1):
+                progress.rank = rank
+            
+            return team_progress
+        finally:
+            sync_db.close()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get team progress: {str(e)}")
+        print(f"Database error in get_team_progress: {e}")
+        # Return empty team progress instead of 500 error
+        return []
 
 
 # ================== LEADERBOARD ==================
 
 @router.get("/leaderboard/current", response_model=List[LeaderboardEntry])
-async def get_current_leaderboard(db: AsyncSession = Depends(get_db)):
+async def get_current_leaderboard():
     """Get current week's leaderboard"""
     try:
-        sales_agent = SalesAgentService(db)
-        week_start = sales_agent.get_current_week_start()
-        leaderboard = await sales_agent.get_team_leaderboard(week_start)
-        
-        return [LeaderboardEntry(**entry) for entry in leaderboard]
+        # Use sync session for SalesAgentService compatibility
+        sync_db = get_sync_session()
+        try:
+            sales_agent = SalesAgentService(sync_db)
+            week_start = sales_agent.get_current_week_start()
+            leaderboard = sales_agent.get_team_leaderboard(week_start)
+            
+            return [LeaderboardEntry(**entry) for entry in leaderboard]
+        finally:
+            sync_db.close()
     except Exception as e:
+        print(f"Error generating leaderboard: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get leaderboard: {str(e)}")
 
 
@@ -529,4 +567,126 @@ async def mark_task_complete(task_id: int, db: AsyncSession = Depends(get_db)):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to complete task: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Failed to complete task: {str(e)}")
+
+
+@router.post("/sync-users")
+async def manual_sync_users():
+    """Manually sync users from Slack channel to database"""
+    
+    try:
+        result = await auto_sync_service.sync_all_users()
+        return {
+            "success": result["success"],
+            "message": f"Sync completed: {result.get('created', 0)} created, {result.get('updated', 0)} updated, {result.get('errors', 0)} errors",
+            "details": result
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Sync failed: {str(e)}"
+        }
+
+
+# ================== SLACK TESTING ==================
+
+@router.post("/test-slack/{user_id}", response_model=SalesResponse)
+async def test_slack_message(user_id: int, request: MessageRequest, db: AsyncSession = Depends(get_db)):
+    """Test sending a Slack message to a specific user"""
+    try:
+        from sqlalchemy import select
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        if not user.slack_user_id:
+            raise HTTPException(status_code=400, detail="User has no Slack ID")
+        
+        # Initialize Slack service
+        from app.services.slack_service import SlackService
+        slack_service = SlackService()
+        
+        # Check if Slack is configured
+        if not slack_service.is_configured():
+            return SalesResponse(
+                success=False,
+                message="Slack is not configured - missing SLACK_BOT_TOKEN",
+                data={"user": user.name, "slack_id": user.slack_user_id}
+            )
+        
+        # Send test message
+        test_message = f"🧪 Test message from DealTracker Sales Agent: {request.message}"
+        result = await slack_service.send_direct_message(user.slack_user_id, test_message)
+        
+        if result.get("ok"):
+            return SalesResponse(
+                success=True,
+                message=f"Test message sent successfully to {user.name}",
+                data={
+                    "user": user.name,
+                    "slack_id": user.slack_user_id,
+                    "message": test_message,
+                    "slack_response": result
+                }
+            )
+        else:
+            return SalesResponse(
+                success=False,
+                message=f"Failed to send message to {user.name}: {result.get('error', 'Unknown error')}",
+                data={
+                    "user": user.name,
+                    "slack_id": user.slack_user_id,
+                    "error": result.get('error'),
+                    "slack_response": result
+                }
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to test Slack message: {str(e)}")
+
+
+@router.post("/test-slack-channel", response_model=SalesResponse)
+async def test_slack_channel_message(request: MessageRequest):
+    """Test sending a message to the main Slack channel"""
+    try:
+        from app.services.slack_service import SlackService
+        slack_service = SlackService()
+        
+        # Check if Slack is configured
+        if not slack_service.is_configured():
+            return SalesResponse(
+                success=False,
+                message="Slack is not configured - missing SLACK_BOT_TOKEN"
+            )
+        
+        # Send test message to channel
+        test_message = f"🧪 Test message from DealTracker Sales Agent: {request.message}"
+        result = await slack_service.send_message(slack_service.channel_id, test_message)
+        
+        if result.get("ok"):
+            return SalesResponse(
+                success=True,
+                message="Test message sent successfully to channel",
+                data={
+                    "channel_id": slack_service.channel_id,
+                    "message": test_message,
+                    "slack_response": result
+                }
+            )
+        else:
+            return SalesResponse(
+                success=False,
+                message=f"Failed to send message to channel: {result.get('error', 'Unknown error')}",
+                data={
+                    "channel_id": slack_service.channel_id,
+                    "error": result.get('error'),
+                    "slack_response": result
+                }
+            )
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to test Slack channel message: {str(e)}") 

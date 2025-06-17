@@ -69,11 +69,11 @@ app.add_middleware(
 )
 
 # Include API routers
-app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
-app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
-app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
-app.include_router(sales.router, prefix="/api/sales", tags=["sales"])
-app.include_router(slack_events_router, prefix="/api")
+app.include_router(auth.router, prefix="/auth", tags=["authentication"])
+app.include_router(projects.router, prefix="/projects", tags=["projects"])
+app.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+app.include_router(sales.router, prefix="/sales", tags=["sales"])
+app.include_router(slack_events_router)
 
 @app.get("/health")
 async def health_check():

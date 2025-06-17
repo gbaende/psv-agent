@@ -7,7 +7,9 @@ import os
 from app.database import engine
 from app.models import Base
 from app.api import auth, projects, tasks, sales
+from app.api.slack_events import router as slack_events_router
 from app.services.scheduler import sales_scheduler
+from app.services.auto_sync_users import auto_sync_service
 
 # Add get_database_url function to database.py
 def get_database_url():
@@ -19,22 +21,36 @@ async def lifespan(app: FastAPI):
     # Startup
     print("🚀 Starting DealTracker Sales Agent...")
     
-    # Start the sales scheduler
+    # Create database tables
+    print("🗄️ Creating database tables...")
     try:
-        sales_scheduler.start()
-        print("✅ Sales scheduler started successfully")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("✅ Database tables created")
     except Exception as e:
-        print(f"⚠️ Failed to start sales scheduler: {e}")
+        print(f"❌ Database table creation error: {e}")
+    
+    # Start the sales scheduler
+    sales_scheduler.start()
+    print("✅ Sales scheduler started")
+    
+    # Auto-sync users from Slack channel
+    print("🔄 Auto-syncing users from Slack channel...")
+    try:
+        sync_result = await auto_sync_service.sync_all_users()
+        if sync_result["success"]:
+            print(f"✅ Auto-sync completed: {sync_result['created']} created, {sync_result['updated']} updated")
+        else:
+            print(f"⚠️ Auto-sync failed: {sync_result.get('error', 'Unknown error')}")
+    except Exception as e:
+        print(f"❌ Auto-sync error: {e}")
     
     yield
     
     # Shutdown
     print("🛑 Shutting down DealTracker Sales Agent...")
-    try:
-        sales_scheduler.stop()
-        print("✅ Sales scheduler stopped successfully")
-    except Exception as e:
-        print(f"⚠️ Error stopping sales scheduler: {e}")
+    sales_scheduler.stop()
+    print("✅ Sales scheduler stopped")
 
 app = FastAPI(
     title="DealTracker Sales Agent",
@@ -57,8 +73,9 @@ app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(sales.router, prefix="/api/sales", tags=["sales"])
+app.include_router(slack_events_router, prefix="/api")
 
-@app.get("/api/health")
+@app.get("/health")
 async def health_check():
     """Health check endpoint"""
     try:
